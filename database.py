@@ -1,182 +1,179 @@
 import sqlite3
+import os
+from typing import List, Optional, Dict, Any
 
-# ---------------- CONNECT ----------------
-conn = sqlite3.connect("location.db")
-cursor = conn.cursor()
+class DatabaseManager:
+    def __init__(self, db_path: str = "location.db"):
+        self.db_path = db_path
+        self._init_db()
 
-# ---------------- CREATE TABLES ----------------
-try:
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS Users (
-        user_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL
-    )
-    """)
+    def _get_connection(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS Map_Search (
-        search_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        location_name TEXT NOT NULL,
-        search_time TEXT NOT NULL
-    )
-    """)
+    def _init_db(self):
+        """Initialize tables if they don't exist."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Users (
+                user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL
+            )
+            """)
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS Travel_Distance (
-        travel_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        distance_km REAL NOT NULL,
-        destination TEXT NOT NULL
-    )
-    """)
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Map_Search (
+                search_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                location_name TEXT NOT NULL,
+                search_time TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE
+            )
+            """)
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS Nearby_Places (
-        place_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        place_name TEXT NOT NULL,
-        category TEXT
-    )
-    """)
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Travel_Distance (
+                travel_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                distance_km REAL NOT NULL,
+                destination TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE
+            )
+            """)
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS Notification_History (
-        notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        notification_time TEXT NOT NULL,
-        esp32_pushed_time TEXT,
-        app_name TEXT NOT NULL,
-        content TEXT NOT NULL
-    )
-    """)
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Nearby_Places (
+                place_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                place_name TEXT NOT NULL,
+                category TEXT,
+                FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE
+            )
+            """)
 
-    conn.commit()
-    print("Tables created successfully")
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Notification_History (
+                notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                notification_time TEXT NOT NULL,
+                esp32_pushed_time TEXT,
+                app_name TEXT NOT NULL,
+                content TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE
+            )
+            """)
+            conn.commit()
 
-except Exception as e:
-    print("Error creating tables:", e)
+    # --- User Operations ---
+    def insert_user(self, username, email, hashed_password) -> Optional[int]:
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO Users (username, email, password) VALUES (?, ?, ?)",
+                    (username, email, hashed_password)
+                )
+                conn.commit()
+                return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            return None
 
-# ---------------- USERS ----------------
-def insert_user(username, email, password):
-    try:
-        cursor.execute(
-            "INSERT INTO Users (username, email, password) VALUES (?, ?, ?)",
-            (username, email, password)
-        )
-        conn.commit()
-        print("User inserted")
-    except sqlite3.IntegrityError:
-        print("User already exists (duplicate email)")
-    except Exception as e:
-        print("Error inserting user:", e)
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM Users WHERE email = ?", (email,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
-def get_users():
-    try:
-        cursor.execute("SELECT * FROM Users")
-        return cursor.fetchall()
-    except:
-        return []
+    def get_users(self) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM Users")
+            return [dict(row) for row in cursor.fetchall()]
 
-def update_user(user_id, new_username):
-    try:
-        cursor.execute(
-            "UPDATE Users SET username = ? WHERE user_id = ?",
-            (new_username, user_id)
-        )
-        conn.commit()
-    except Exception as e:
-        print("Update error:", e)
+    # --- Search Operations ---
+    def insert_search(self, user_id, location_name, search_time):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO Map_Search (user_id, location_name, search_time) VALUES (?, ?, ?)",
+                (user_id, location_name, search_time)
+            )
+            conn.commit()
+            return cursor.lastrowid
 
-# ---------------- MAP SEARCH ----------------
-def insert_search(user_id, location_name, search_time):
-    try:
-        cursor.execute(
-            "INSERT INTO Map_Search VALUES (NULL, ?, ?, ?)",
-            (user_id, location_name, search_time)
-        )
-        conn.commit()
-    except Exception as e:
-        print("Search insert error:", e)
+    def get_searches(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if user_id:
+                cursor.execute("SELECT * FROM Map_Search WHERE user_id = ?", (user_id,))
+            else:
+                cursor.execute("SELECT * FROM Map_Search")
+            return [dict(row) for row in cursor.fetchall()]
 
-def get_searches():
-    try:
-        cursor.execute("SELECT * FROM Map_Search")
-        return cursor.fetchall()
-    except:
-        return []
+    # --- Travel Operations ---
+    def insert_travel(self, user_id, distance_km, destination):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO Travel_Distance (user_id, distance_km, destination) VALUES (?, ?, ?)",
+                (user_id, distance_km, destination)
+            )
+            conn.commit()
+            return cursor.lastrowid
 
-# ---------------- TRAVEL ----------------
-def insert_travel(user_id, distance_km, destination):
-    try:
-        cursor.execute(
-            "INSERT INTO Travel_Distance VALUES (NULL, ?, ?, ?)",
-            (user_id, distance_km, destination)
-        )
-        conn.commit()
-    except Exception as e:
-        print("Travel insert error:", e)
+    def get_travel(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if user_id:
+                cursor.execute("SELECT * FROM Travel_Distance WHERE user_id = ?", (user_id,))
+            else:
+                cursor.execute("SELECT * FROM Travel_Distance")
+            return [dict(row) for row in cursor.fetchall()]
 
-def get_travel():
-    try:
-        cursor.execute("SELECT * FROM Travel_Distance")
-        return cursor.fetchall()
-    except:
-        return []
+    # --- Places Operations ---
+    def insert_place(self, user_id, place_name, category):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO Nearby_Places (user_id, place_name, category) VALUES (?, ?, ?)",
+                (user_id, place_name, category)
+            )
+            conn.commit()
+            return cursor.lastrowid
 
-# ---------------- PLACES ----------------
-def insert_place(user_id, place_name, category):
-    try:
-        cursor.execute(
-            "INSERT INTO Nearby_Places VALUES (NULL, ?, ?, ?)",
-            (user_id, place_name, category)
-        )
-        conn.commit()
-    except Exception as e:
-        print("Place insert error:", e)
+    def get_places(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if user_id:
+                cursor.execute("SELECT * FROM Nearby_Places WHERE user_id = ?", (user_id,))
+            else:
+                cursor.execute("SELECT * FROM Nearby_Places")
+            return [dict(row) for row in cursor.fetchall()]
 
-def get_places():
-    try:
-        cursor.execute("SELECT * FROM Nearby_Places")
-        return cursor.fetchall()
-    except:
-        return []
+    # --- Notification Operations ---
+    def insert_notification(self, user_id, time, app, content):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO Notification_History (user_id, notification_time, app_name, content) VALUES (?, ?, ?, ?)",
+                (user_id, time, app, content)
+            )
+            conn.commit()
+            return cursor.lastrowid
 
-# ---------------- NOTIFICATIONS ----------------
-def insert_notification(user_id, time, app, content):
-    try:
-        cursor.execute(
-            "INSERT INTO Notification_History VALUES (NULL, ?, ?, NULL, ?, ?)",
-            (user_id, time, app, content)
-        )
-        conn.commit()
-    except Exception as e:
-        print("Notification insert error:", e)
+    def get_notifications(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if user_id:
+                cursor.execute("SELECT * FROM Notification_History WHERE user_id = ?", (user_id,))
+            else:
+                cursor.execute("SELECT * FROM Notification_History")
+            return [dict(row) for row in cursor.fetchall()]
 
-def get_notifications():
-    try:
-        cursor.execute("SELECT * FROM Notification_History")
-        return cursor.fetchall()
-    except:
-        return []
-
-# ---------------- TEST ----------------
-insert_user("abhi", "abhi@gmail.com", "1234")
-
-print("Users:", get_users())
-
-insert_search(1, "Chennai", "10:00 AM")
-print("Search:", get_searches())
-
-insert_travel(1, 12.5, "Airport")
-print("Travel:", get_travel())
-
-insert_place(1, "Hotel Saravana", "Restaurant")
-print("Places:", get_places())
-
-insert_notification(1, "10:05 AM", "Maps", "Route calculated")
-print("Notifications:", get_notifications())
-
-conn.close()
+# Singleton instance
+db = DatabaseManager()
